@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0" />
+  <title>Liman Yönetim Sistemi</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0e7c86" />
+  <meta name="description" content="Balıkçı barınakları ve kooperatifleri için evrak ve hak sahibi takip sistemi" />
+
+  <!-- iOS (Safari "Ana Ekrana Ekle") -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Liman" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
+  <!-- Simgeler -->
+  <link rel="icon" type="image/png" sizes="192x192" href="ikon-192.png" />
+  <link rel="icon" type="image/svg+xml" href="ikon.svg" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="stil.css" />
+</head>
+<body>
+  <div id="kok"></div>
+  <script src="uygulama.js"></script>
+  <script>
+    // Service Worker kaydı (PWA offline + ana ekrana ekleme)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW kaydı başarısız:', e));
+      });
+    }
+  </script>
+</body>
+</html>
