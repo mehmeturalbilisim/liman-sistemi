@@ -1106,6 +1106,16 @@ function sureYaklasanlar(kapsam, gun = 60) {
   return sonuc;
 }
 
+// Ekranda göstermek için JSON (rapor indirmeden)
+app.get('/api/rapor/sure-yaklasan', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi', 'liman_personeli'), (req, res) => {
+  const gun = Math.max(1, Math.min(365, Number(req.query.gun) || 60));
+  const liste = sureYaklasanlar(limanKapsami(req), gun).map(x => ({
+    hak_sahibi_id: x.hs.id, ad_soyad: x.hs.ad_soyad, liman_adi: x.hs.liman_adi,
+    telefon: x.hs.telefon || '', belge_adi: x.belge_adi, gecerlilik_bitis: x.gecerlilik_bitis, kalan: x.kalan,
+  }));
+  res.json({ gun, toplam: liste.length, liste });
+});
+
 app.get('/api/rapor/sure-yaklasan.csv', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi', 'liman_personeli'), (req, res) => {
   const gun = Math.max(1, Math.min(365, Number(req.query.gun) || 60));
   const liste = sureYaklasanlar(limanKapsami(req), gun);

@@ -1813,30 +1813,81 @@ async function raporlarSayfa(hedef) {
       <div class="rapor-kart">
         <div class="bik">⏰</div>
         <h3>Süresi yaklaşan belgeler</h3>
-        <p>Geçerlilik tarihi yaklaşan onaylı belgeler. En acil olan en üstte listelenir.</p>
-        <div class="alan" style="margin:4px 0 12px">
-          <label style="font-size:12px">Zaman aralığı</label>
-          <select id="yaklasan-gun">
-            <option value="30">Önümüzdeki 30 gün</option>
-            <option value="60" selected>Önümüzdeki 60 gün</option>
-            <option value="90">Önümüzdeki 90 gün</option>
-            <option value="180">Önümüzdeki 6 ay</option>
-          </select>
-        </div>
+        <p>Geçerlilik tarihi yaklaşan onaylı belgeler. Aşağıda ekranda görüntüleyebilir veya indirebilirsiniz.</p>
         <div class="indir">
           <button class="btn btn-mini" id="yaklasan-html">🖨️ Yazdır / PDF</button>
           <button class="btn btn-acik btn-mini" id="yaklasan-csv">⬇ Excel (CSV)</button>
         </div>
       </div>
     </div>
+
+    <div class="panel" style="margin-top:20px">
+      <div class="yaklasan-filtre-bar">
+        <div class="yfb-sol">
+          <span class="yfb-baslik">⏰ Süresi yaklaşan belgeler</span>
+          <span class="yfb-aciklama">Belgesinin geçerliliği dolmak üzere olan hak sahipleri</span>
+        </div>
+        <div class="yfb-sag">
+          <label for="yaklasan-gun" class="yfb-etiket">Zaman aralığı:</label>
+          <select id="yaklasan-gun" class="yfb-secim">
+            <option value="30">Önümüzdeki 30 gün</option>
+            <option value="60" selected>Önümüzdeki 60 gün</option>
+            <option value="90">Önümüzdeki 90 gün</option>
+            <option value="180">Önümüzdeki 6 ay</option>
+            <option value="365">Önümüzdeki 1 yıl</option>
+          </select>
+        </div>
+      </div>
+      <div id="yaklasan-liste"><div class="bos-durum"><div class="ikon">⏳</div><p>Yükleniyor…</p></div></div>
+    </div>
+
     <div class="mesaj-bilgi">💡 "Yazdır / PDF" butonu raporu yeni sekmede açar; oradan tarayıcının yazdır penceresiyle PDF olarak kaydedebilirsiniz. CSV dosyaları Excel'de açılır.</div>`;
 
   hedef.querySelectorAll('[data-html]').forEach(b => b.addEventListener('click', () => raporIndir(b.dataset.html.replace('/api', ''))));
   hedef.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => raporIndir(b.dataset.csv.replace('/api', ''))));
-  // Süresi yaklaşan: seçilen gün sayısına göre
+  // Süresi yaklaşan: seçilen gün sayısına göre indirme + canlı liste
   const gunSec = () => document.getElementById('yaklasan-gun').value;
   document.getElementById('yaklasan-html').addEventListener('click', () => raporIndir('/rapor/sure-yaklasan.html?gun=' + gunSec()));
   document.getElementById('yaklasan-csv').addEventListener('click', () => raporIndir('/rapor/sure-yaklasan.csv?gun=' + gunSec()));
+  document.getElementById('yaklasan-gun').addEventListener('change', () => yaklasanListeYukle(gunSec()));
+  yaklasanListeYukle(gunSec());
+}
+
+// Süresi yaklaşan belgeleri ekranda canlı göster (rapor indirmeden)
+async function yaklasanListeYukle(gun) {
+  const kutu = document.getElementById('yaklasan-liste');
+  if (!kutu) return;
+  try {
+    const veri = await istek('/rapor/sure-yaklasan?gun=' + gun);
+    if (veri.liste.length === 0) {
+      kutu.innerHTML = '<div class="bos-durum"><div class="ikon">✅</div><p>Bu dönemde süresi yaklaşan belge yok.</p></div>';
+      return;
+    }
+    const satir = (x) => {
+      let sinif, etiket;
+      if (x.kalan < 0) { sinif = 'kirmizi'; etiket = `${Math.abs(x.kalan)} gün önce doldu`; }
+      else if (x.kalan <= 15) { sinif = 'kirmizi'; etiket = `${x.kalan} gün kaldı`; }
+      else if (x.kalan <= 30) { sinif = 'sari'; etiket = `${x.kalan} gün kaldı`; }
+      else { sinif = 'teal'; etiket = `${x.kalan} gün kaldı`; }
+      const tarih = new Date(x.gecerlilik_bitis + 'T00:00:00').toLocaleDateString('tr-TR');
+      return `<tr>
+        <td><b>${escapeHtml(x.ad_soyad)}</b>${x.telefon ? `<span class="alt">${escapeHtml(x.telefon)}</span>` : ''}</td>
+        <td>${escapeHtml(x.belge_adi)}</td>
+        <td>${tarih}</td>
+        <td><span class="rozet rozet-${sinif}">${etiket}</span></td>
+        <td><button class="btn btn-acik btn-mini" data-git="${x.hak_sahibi_id}">Hak sahibine git →</button></td>
+      </tr>`;
+    };
+    kutu.innerHTML = `
+      <div style="padding:0 4px 12px;color:var(--metin-soluk);font-size:13px">Toplam <b>${veri.toplam}</b> belge listeleniyor (en acil en üstte).</div>
+      <div class="tablo-sar"><table>
+        <thead><tr><th>Hak Sahibi</th><th>Belge</th><th>Geçerlilik Bitişi</th><th>Durum</th><th></th></tr></thead>
+        <tbody>${veri.liste.map(satir).join('')}</tbody>
+      </table></div>`;
+    kutu.querySelectorAll('[data-git]').forEach(b => b.addEventListener('click', () => hakSahibiDetay(b.dataset.git)));
+  } catch (err) {
+    kutu.innerHTML = `<div class="bos-durum"><p style="color:var(--mercan)">${escapeHtml(err.message)}</p></div>`;
+  }
 }
 
 async function mesajlarSayfa(hedef) {
