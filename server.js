@@ -1053,7 +1053,7 @@ app.get('/api/rapor/uygunluk.csv', girisGerekli, rolGerekli('super_admin', 'lima
   const veri = raporVerisi(limanKapsami(req));
   const basliklar = ['Hak Sahibi', 'Liman', 'Telefon', 'Uygunluk %', 'Tam Belge', 'Toplam Zorunlu', 'Eksik', 'Durum'];
   const satirlar = veri.map(({ hs, skor }) => [
-    hs.ad_soyad, hs.liman_adi, hs.telefon || '', skor.yuzde, skor.tam, skor.toplam, skor.eksik.length,
+    hs.ad_soyad, hs.liman_adi, hs.telefon || '', skor.yuzde, skor.tam, skor.toplam, skor.eksik,
     skor.yuzde === 100 ? 'Tam' : skor.yuzde >= 40 ? 'Dikkat' : 'Eksik',
   ]);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1094,7 +1094,7 @@ app.get('/api/rapor/uygunluk.html', girisGerekli, rolGerekli('super_admin', 'lim
       <td>${esc(hs.ad_soyad)}</td><td>${esc(hs.liman_adi)}</td><td>${esc(hs.telefon || '-')}</td>
       <td style="text-align:center"><b style="color:${renk}">%${skor.yuzde}</b></td>
       <td style="text-align:center">${skor.tam}/${skor.toplam}</td>
-      <td style="text-align:center">${skor.eksik.length}</td></tr>`;
+      <td style="text-align:center">${skor.eksik}</td></tr>`;
   }).join('');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
