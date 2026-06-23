@@ -1088,12 +1088,19 @@ function sureYaklasanlar(kapsam, gun = 60) {
   const bugun = new Date(); bugun.setHours(0, 0, 0, 0);
   const sonuc = [];
   for (const hs of hsListe) {
-    // Bu kişinin onaylı + geçerlilik tarihi olan belgeleri
+    // Bu kişinin onaylı + geçerlilik tarihi olan belgeleri.
+    // Aynı belge tipinden (ve aynı tekne/dam için) yalnızca EN GÜNCEL olanı dikkate al;
+    // eski/yenilenmiş belgeler raporu kirletmesin.
     const belgeler = tumu(
       `SELECT b.*, bt.ad AS belge_adi FROM belgeler b JOIN belge_tipleri bt ON bt.id=b.belge_tipi_id
-       WHERE b.hak_sahibi_id=? AND b.durum='onayli' AND b.gecerlilik_bitis IS NOT NULL`, hs.id
+       WHERE b.hak_sahibi_id=? AND b.durum='onayli' AND b.gecerlilik_bitis IS NOT NULL
+       ORDER BY b.olusturma_tarihi DESC`, hs.id
     );
+    const gorulen = new Set(); // belge_tipi_id|tekne_id|dam_id → ilk görülen = en güncel
     for (const b of belgeler) {
+      const anahtar = `${b.belge_tipi_id}|${b.tekne_id || ''}|${b.dam_id || ''}`;
+      if (gorulen.has(anahtar)) continue; // bu tip için zaten daha güncel belge işlendi
+      gorulen.add(anahtar);
       const bitis = new Date(b.gecerlilik_bitis + 'T00:00:00');
       const kalan = Math.round((bitis - bugun) / 86400000);
       if (kalan <= gun) { // yaklaşan veya yeni dolmuş
