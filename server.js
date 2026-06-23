@@ -838,44 +838,122 @@ app.get('/api/benim-kaydim', girisGerekli, (req, res) => {
 // ============================================================
 
 // ---- DUYURULAR ----
-// Kullanıcının görebileceği duyurular: kendi limanı + tüm sistem (liman_id NULL)
+// Kullanıcının görebileceği duyurular: kendi limanı + tüm sistem; 'secili' ise sadece hedefindekiler
 app.get('/api/duyurular', girisGerekli, (req, res) => {
   let limanId = req.kullanici.liman_id;
+  let benimHsId = null;
   if (selfServisMi(req)) {
-    const hs = getir('SELECT liman_id FROM hak_sahipleri WHERE kullanici_id=?', req.kullanici.id);
+    const hs = getir('SELECT id, liman_id FROM hak_sahipleri WHERE kullanici_id=?', req.kullanici.id);
     limanId = hs?.liman_id ?? null;
+    benimHsId = hs?.id ?? null;
   }
   let satirlar;
   if (req.kullanici.rol === 'super_admin') {
     satirlar = tumu(`SELECT d.*, l.ad AS liman_adi FROM duyurular d LEFT JOIN limanlar l ON l.id=d.liman_id WHERE d.aktif=1 ORDER BY d.olusturma_tarihi DESC`);
+  } else if (selfServisMi(req)) {
+    // Hak sahibi/vekil: herkese açık olanlar + kendisine özel hedeflenenler
+    satirlar = tumu(
+      `SELECT d.*, l.ad AS liman_adi FROM duyurular d LEFT JOIN limanlar l ON l.id=d.liman_id
+       WHERE d.aktif=1 AND (d.liman_id IS NULL OR d.liman_id=?)
+         AND (d.hedef_tipi='herkes' OR d.id IN (SELECT duyuru_id FROM duyuru_hedefleri WHERE hak_sahibi_id=?))
+       ORDER BY d.olusturma_tarihi DESC`,
+      limanId, benimHsId
+    );
   } else {
+    // Liman yöneticisi/personeli: kendi limanının + sistem duyuruları (hepsini görür)
     satirlar = tumu(
       `SELECT d.*, l.ad AS liman_adi FROM duyurular d LEFT JOIN limanlar l ON l.id=d.liman_id
        WHERE d.aktif=1 AND (d.liman_id IS NULL OR d.liman_id=?) ORDER BY d.olusturma_tarihi DESC`,
       limanId
     );
   }
+  // Okundu bilgisini ekle
+  const okunanlar = new Set(tumu('SELECT duyuru_id FROM duyuru_okundu WHERE kullanici_id=?', req.kullanici.id).map(x => x.duyuru_id));
+  satirlar.forEach(d => { d.okundu = okunanlar.has(d.id); });
   res.json(satirlar);
 });
 
-app.post('/api/duyurular', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), (req, res) => {
-  let { liman_id, baslik, icerik, oncelik } = req.body;
+// Okunmamış duyuru sayısı (menü rozeti için)
+app.get('/api/duyurular/okunmamis-sayi', girisGerekli, (req, res) => {
+  // Görülebilir duyuruları yukarıdaki mantıkla say
+  let limanId = req.kullanici.liman_id, benimHsId = null;
+  if (selfServisMi(req)) {
+    const hs = getir('SELECT id, liman_id FROM hak_sahipleri WHERE kullanici_id=?', req.kullanici.id);
+    limanId = hs?.liman_id ?? null; benimHsId = hs?.id ?? null;
+  }
+  let gorunur;
+  if (req.kullanici.rol === 'super_admin') {
+    gorunur = tumu('SELECT id FROM duyurular WHERE aktif=1');
+  } else if (selfServisMi(req)) {
+    gorunur = tumu(`SELECT id FROM duyurular WHERE aktif=1 AND (liman_id IS NULL OR liman_id=?)
+       AND (hedef_tipi='herkes' OR id IN (SELECT duyuru_id FROM duyuru_hedefleri WHERE hak_sahibi_id=?))`, limanId, benimHsId);
+  } else {
+    gorunur = tumu('SELECT id FROM duyurular WHERE aktif=1 AND (liman_id IS NULL OR liman_id=?)', limanId);
+  }
+  const okunanlar = new Set(tumu('SELECT duyuru_id FROM duyuru_okundu WHERE kullanici_id=?', req.kullanici.id).map(x => x.duyuru_id));
+  const sayi = gorunur.filter(d => !okunanlar.has(d.id)).length;
+  res.json({ sayi });
+});
+
+// Tek duyuru detayı (aç) + okundu olarak işaretle
+app.get('/api/duyurular/:id', girisGerekli, (req, res) => {
+  const id = Number(req.params.id);
+  const d = getir(`SELECT d.*, l.ad AS liman_adi, k.ad_soyad AS yayinlayan_adi
+    FROM duyurular d LEFT JOIN limanlar l ON l.id=d.liman_id LEFT JOIN kullanicilar k ON k.id=d.yayinlayan_id
+    WHERE d.id=? AND d.aktif=1`, id);
+  if (!d) return res.status(404).json({ hata: 'Duyuru bulunamadı.' });
+  // Okundu işaretle (varsa dokunma)
+  calistir(`INSERT INTO duyuru_okundu (duyuru_id,kullanici_id) VALUES (?,?) ON CONFLICT(duyuru_id,kullanici_id) DO NOTHING`, id, req.kullanici.id);
+  // Yöneticiye hedef kişileri de göster
+  if (['super_admin', 'liman_yoneticisi', 'liman_personeli'].includes(req.kullanici.rol) && d.hedef_tipi === 'secili') {
+    d.hedefler = tumu(`SELECT h.id, h.ad_soyad FROM duyuru_hedefleri dh JOIN hak_sahipleri h ON h.id=dh.hak_sahibi_id WHERE dh.duyuru_id=?`, id);
+  }
+  res.json(d);
+});
+
+// Duyuru ekli dosyasını indir
+app.get('/api/duyurular/:id/dosya', girisGerekli, (req, res) => {
+  const d = getir('SELECT * FROM duyurular WHERE id=? AND aktif=1', Number(req.params.id));
+  if (!d || !d.dosya_yolu) return res.status(404).json({ hata: 'Dosya yok.' });
+  res.sendFile(join(YUKLEME_DIZIN, d.dosya_yolu));
+});
+
+app.post('/api/duyurular', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), yukle.single('dosya'), (req, res) => {
+  let { liman_id, baslik, icerik, oncelik, hedef_tipi, hedef_hsler } = req.body;
   if (!baslik || !icerik) return res.status(400).json({ hata: 'Başlık ve içerik zorunlu.' });
   const kapsam = limanKapsami(req);
-  // Liman yöneticisi yalnızca kendi limanına duyuru yapar
   if (kapsam !== null) liman_id = kapsam;
-  // Süper admin liman_id boş bırakırsa = tüm sistem
   else if (!liman_id) liman_id = null;
+  hedef_tipi = hedef_tipi === 'secili' ? 'secili' : 'herkes';
+
   const r = calistir(
-    `INSERT INTO duyurular (liman_id,baslik,icerik,oncelik,yayinlayan_id) VALUES (?,?,?,?,?)`,
-    liman_id, baslik, icerik, oncelik || 'normal', req.kullanici.id
+    `INSERT INTO duyurular (liman_id,baslik,icerik,oncelik,yayinlayan_id,hedef_tipi,dosya_yolu,dosya_adi) VALUES (?,?,?,?,?,?,?,?)`,
+    liman_id, baslik, icerik, oncelik || 'normal', req.kullanici.id, hedef_tipi,
+    req.file ? req.file.filename : null, req.file ? req.file.originalname : null
   );
-  // İlgili hak sahiplerine bildirim üret
-  const hedefHs = liman_id === null
-    ? tumu('SELECT kullanici_id FROM hak_sahipleri WHERE kullanici_id IS NOT NULL')
-    : tumu('SELECT kullanici_id FROM hak_sahipleri WHERE liman_id=? AND kullanici_id IS NOT NULL', liman_id);
+  const duyuruId = r.lastInsertRowid;
+
+  // Hedef kişileri çöz
+  let hedefHs;
+  if (hedef_tipi === 'secili') {
+    let idler = [];
+    try { idler = JSON.parse(hedef_hsler || '[]'); } catch {}
+    idler = idler.map(Number).filter(Boolean);
+    for (const hsId of idler) {
+      // Güvenlik: hak sahibi gerçekten bu limanda mı?
+      const hs = getir('SELECT id, liman_id, kullanici_id FROM hak_sahipleri WHERE id=?', hsId);
+      if (!hs) continue;
+      if (kapsam !== null && hs.liman_id !== kapsam) continue;
+      calistir('INSERT OR IGNORE INTO duyuru_hedefleri (duyuru_id,hak_sahibi_id) VALUES (?,?)', duyuruId, hsId);
+    }
+    hedefHs = tumu(`SELECT h.kullanici_id FROM duyuru_hedefleri dh JOIN hak_sahipleri h ON h.id=dh.hak_sahibi_id WHERE dh.duyuru_id=? AND h.kullanici_id IS NOT NULL`, duyuruId);
+  } else {
+    hedefHs = liman_id === null
+      ? tumu('SELECT kullanici_id FROM hak_sahipleri WHERE kullanici_id IS NOT NULL')
+      : tumu('SELECT kullanici_id FROM hak_sahipleri WHERE liman_id=? AND kullanici_id IS NOT NULL', liman_id);
+  }
   for (const h of hedefHs) bildirimEkle(h.kullanici_id, 'duyuru', `Yeni duyuru: ${baslik}`, icerik, null);
-  res.status(201).json(getir('SELECT * FROM duyurular WHERE id = ?', r.lastInsertRowid));
+  res.status(201).json(getir('SELECT * FROM duyurular WHERE id = ?', duyuruId));
 });
 
 app.delete('/api/duyurular/:id', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), (req, res) => {

@@ -169,7 +169,7 @@ function uygulamaCiz() {
           <div><b>Liman</b><small>Yönetim Sistemi</small></div>
         </div>
         <ul class="menu" id="menu">
-          ${menuOgeleri().map(o => `<li><a data-sayfa="${o.id}" class="${durum.sayfa === o.id ? 'aktif' : ''}"><span class="ikon">${o.ikon}</span>${o.ad}</a></li>`).join('')}
+          ${menuOgeleri().map(o => `<li><a data-sayfa="${o.id}" class="${durum.sayfa === o.id ? 'aktif' : ''}"><span class="ikon">${o.ikon}</span>${o.ad}${o.id === 'duyurular' ? '<span class="menu-rozet" id="duyuru-rozet" style="display:none"></span>' : ''}</a></li>`).join('')}
         </ul>
         <div class="yan-alt">
           <div class="yan-kullanici">
@@ -206,7 +206,20 @@ function uygulamaCiz() {
   if (menuAc) menuAc.addEventListener('click', () => document.getElementById('yan').classList.toggle('acik'));
 
   zilKur();
+  rozetleriTazele();
   sayfaCiz();
+}
+
+// Menü rozetlerini (okunmamış duyuru sayısı) güncelle
+async function rozetleriTazele() {
+  try {
+    const r = await istek('/duyurular/okunmamis-sayi');
+    const rozet = document.getElementById('duyuru-rozet');
+    if (rozet) {
+      if (r.sayi > 0) { rozet.textContent = r.sayi; rozet.style.display = 'inline-block'; }
+      else rozet.style.display = 'none';
+    }
+  } catch {}
 }
 
 function sayfaCiz() {
@@ -1586,40 +1599,75 @@ async function duyurularSayfa(hedef) {
       ${liste.length === 0
         ? '<div class="panel"><div class="bos-durum"><div class="ikon">📢</div><p>Henüz duyuru yok.</p></div></div>'
         : liste.map(d => `
-          <div class="duyuru-kart ${d.oncelik}">
+          <div class="duyuru-kart ${d.oncelik} ${d.okundu ? '' : 'okunmamis'}">
             <div class="ust">
-              <h3>${escapeHtml(d.baslik)}</h3>
+              <h3>${d.okundu ? '' : '<span class="yeni-nokta" title="Yeni"></span>'}${escapeHtml(d.baslik)}</h3>
               <div style="display:flex;gap:8px;align-items:center">
                 <span class="oncelik-rozet ${d.oncelik}">${d.oncelik === 'acil' ? 'Acil' : d.oncelik === 'onemli' ? 'Önemli' : 'Normal'}</span>
                 ${yonetici ? `<button class="btn btn-tehlike btn-mini" data-sil="${d.id}">Sil</button>` : ''}
               </div>
             </div>
-            <div class="icerik">${escapeHtml(d.icerik)}</div>
+            <div class="icerik">${escapeHtml((d.icerik || '').slice(0, 140))}${(d.icerik || '').length > 140 ? '…' : ''}</div>
             <div class="meta">
               <span class="kapsam-etiket">${d.liman_id === null ? '🌐 Tüm sistem' : '⚓ ' + escapeHtml(d.liman_adi || 'Liman')}</span>
+              ${d.hedef_tipi === 'secili' ? '<span class="kapsam-etiket">👁 Seçili kişiler</span>' : ''}
+              ${d.dosya_adi ? '<span class="kapsam-etiket">📎 Ek dosya</span>' : ''}
               <span>${zamanFarki(d.olusturma_tarihi)}</span>
+              <button class="btn btn-acik btn-mini" data-ac="${d.id}">Duyuruyu aç →</button>
             </div>
           </div>`).join('')}`;
 
     const ekle = document.getElementById('ekle-btn');
     if (ekle) ekle.addEventListener('click', () => duyuruFormu());
-    hedef.querySelectorAll('[data-sil]').forEach(b => b.addEventListener('click', async () => {
+    hedef.querySelectorAll('[data-ac]').forEach(b => b.addEventListener('click', () => duyuruDetay(b.dataset.ac)));
+    hedef.querySelectorAll('[data-sil]').forEach(b => b.addEventListener('click', async (e) => {
+      e.stopPropagation();
       if (!confirm('Duyuru silinsin mi?')) return;
       await istek('/duyurular/' + b.dataset.sil, { method: 'DELETE' }); toast('Duyuru silindi.'); sayfaCiz();
     }));
   } catch (err) { hataGoster(hedef, err); }
 }
 
+// Madde 1: Duyuruyu detaylı aç (okundu işaretler, dosya indirme, hedef kişiler)
+async function duyuruDetay(id) {
+  try {
+    const d = await istek('/duyurular/' + id);
+    const yonetici = yetkili('super_admin', 'liman_yoneticisi', 'liman_personeli');
+    modal(escapeHtml(d.baslik), `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <span class="oncelik-rozet ${d.oncelik}">${d.oncelik === 'acil' ? 'Acil' : d.oncelik === 'onemli' ? 'Önemli' : 'Normal'}</span>
+        <span class="kapsam-etiket">${d.liman_id === null ? '🌐 Tüm sistem' : '⚓ ' + escapeHtml(d.liman_adi || 'Liman')}</span>
+        ${d.hedef_tipi === 'secili' ? '<span class="kapsam-etiket">👁 Seçili kişiler</span>' : ''}
+      </div>
+      <div style="white-space:pre-wrap;line-height:1.6;font-size:15px;color:var(--metin);margin-bottom:16px">${escapeHtml(d.icerik)}</div>
+      ${d.dosya_adi ? `<a class="btn btn-acik btn-blok" href="${API}/duyurular/${d.id}/dosya?token=${durum.token}" target="_blank" style="margin-bottom:14px">📎 Ek dosyayı indir: ${escapeHtml(d.dosya_adi)}</a>` : ''}
+      ${(yonetici && d.hedefler && d.hedefler.length) ? `
+        <div class="detay-grup"><h4>Gönderilen kişiler (${d.hedefler.length})</h4>
+          <div class="mini-liste">${d.hedefler.map(h => `<div class="mini-kart"><div><b>${escapeHtml(h.ad_soyad)}</b></div></div>`).join('')}</div>
+        </div>` : ''}
+      <div class="meta" style="margin-top:8px">
+        ${d.yayinlayan_adi ? '<span>Yayınlayan: ' + escapeHtml(d.yayinlayan_adi) + '</span>' : ''}
+        <span>${zamanFarki(d.olusturma_tarihi)}</span>
+      </div>
+    `, null, 'Kapat');
+    // Açılınca okundu işaretlendi → menü rozetini ve sayfayı tazele
+    rozetleriTazele();
+  } catch (err) { toast(err.message, 'hata'); }
+}
+
 async function duyuruFormu() {
   let limanlar = durum.veri.limanlar;
   if (yetkili('super_admin') && !limanlar) { limanlar = await istek('/limanlar'); durum.veri.limanlar = limanlar; }
+  // Hedef seçimi için hak sahipleri (yöneticinin kendi limanından)
+  let hakSahipleri = [];
+  try { hakSahipleri = await istek('/hak-sahipleri'); } catch {}
   const limanSecim = yetkili('super_admin')
-    ? `<div class="alan"><label>Hedef</label>
+    ? `<div class="alan"><label>Hangi liman</label>
         <select name="liman_id">
           <option value="">🌐 Tüm sistem (tüm limanlar)</option>
           ${(limanlar || []).map(l => `<option value="${l.id}">⚓ ${escapeHtml(l.ad)}</option>`).join('')}
         </select></div>`
-    : '<p style="font-size:13px;color:var(--metin-soluk);margin-bottom:14px">Bu duyuru limanınızdaki tüm hak sahiplerine iletilecek.</p>';
+    : '<p style="font-size:13px;color:var(--metin-soluk);margin-bottom:14px">Bu duyuru limanınızdaki hak sahiplerine iletilecek.</p>';
   modal('Yeni duyuru', `
     ${limanSecim}
     <div class="alan"><label>Başlık *</label><input name="baslik" required placeholder="ör. Av yasağı dönemi başlıyor" /></div>
@@ -1630,12 +1678,47 @@ async function duyuruFormu() {
         <option value="acil">Acil</option>
       </select></div>
     <div class="alan"><label>İçerik *</label><textarea name="icerik" rows="4" required placeholder="Duyuru metni…"></textarea></div>
+    <div class="alan"><label>Kime gönderilsin? *</label>
+      <select name="hedef_tipi" id="hedef-tipi">
+        <option value="herkes">👥 Herkese (tüm hak sahipleri)</option>
+        <option value="secili">👁 Belli kişilere</option>
+      </select></div>
+    <div class="alan" id="secili-kisiler-alan" style="display:none">
+      <label>Kişileri seçin</label>
+      <div class="kisi-secim-kutu" id="kisi-secim">
+        ${hakSahipleri.map(h => `<label class="kisi-secenek"><input type="checkbox" value="${h.id}" /> ${escapeHtml(h.ad_soyad)}${h.telefon ? ' <span class="alt-ic">(' + escapeHtml(h.telefon) + ')</span>' : ''}</label>`).join('') || '<p class="alt">Hak sahibi yok.</p>'}
+      </div>
+    </div>
+    <div class="alan"><label>Ek dosya (isteğe bağlı)</label><input type="file" name="dosya" accept=".pdf,.jpg,.jpeg,.png,.webp" /></div>
   `, async (form) => {
-    const govde = formVeri(form);
-    await istek('/duyurular', { method: 'POST', body: JSON.stringify(govde) });
+    const hedefTipi = form.querySelector('[name="hedef_tipi"]').value;
+    const fd = new FormData();
+    fd.append('baslik', form.querySelector('[name="baslik"]').value);
+    fd.append('icerik', form.querySelector('[name="icerik"]').value);
+    fd.append('oncelik', form.querySelector('[name="oncelik"]').value);
+    fd.append('hedef_tipi', hedefTipi);
+    const limanSec = form.querySelector('[name="liman_id"]');
+    if (limanSec) fd.append('liman_id', limanSec.value);
+    if (hedefTipi === 'secili') {
+      const secili = [...form.querySelectorAll('#kisi-secim input:checked')].map(c => Number(c.value));
+      if (secili.length === 0) throw new Error('En az bir kişi seçin veya "Herkese" seçeneğini kullanın.');
+      fd.append('hedef_hsler', JSON.stringify(secili));
+    }
+    const dosya = form.querySelector('[name="dosya"]').files[0];
+    if (dosya) fd.append('dosya', dosya);
+    await istekDosya('/duyurular', fd);
     toast('Duyuru yayınlandı.');
     sayfaCiz();
   });
+
+  // "Belli kişilere" seçilince kişi listesini göster
+  const hedefTipi = document.getElementById('hedef-tipi');
+  const seciliAlan = document.getElementById('secili-kisiler-alan');
+  if (hedefTipi && seciliAlan) {
+    hedefTipi.addEventListener('change', () => {
+      seciliAlan.style.display = hedefTipi.value === 'secili' ? 'block' : 'none';
+    });
+  }
 }
 
 // ---- TRAFİK-IŞIĞI PANELİ ----

@@ -165,10 +165,35 @@ CREATE TABLE IF NOT EXISTS duyurular (
   icerik TEXT NOT NULL,
   oncelik TEXT NOT NULL DEFAULT 'normal' CHECK(oncelik IN ('normal','onemli','acil')),
   yayinlayan_id INTEGER,
+  -- Hedef: 'herkes' (limandaki/sistemdeki herkes) | 'secili' (yalnızca seçili hak sahipleri)
+  hedef_tipi TEXT NOT NULL DEFAULT 'herkes' CHECK(hedef_tipi IN ('herkes','secili')),
+  dosya_yolu TEXT,                   -- ekli dosyanın sunucudaki adı
+  dosya_adi TEXT,                    -- ekli dosyanın orijinal adı
   aktif INTEGER NOT NULL DEFAULT 1,
   olusturma_tarihi TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (liman_id) REFERENCES limanlar(id) ON DELETE CASCADE,
   FOREIGN KEY (yayinlayan_id) REFERENCES kullanicilar(id) ON DELETE SET NULL
+);
+
+-- Duyuru hedefleri: 'secili' duyurular için hangi hak sahiplerine gittiği
+CREATE TABLE IF NOT EXISTS duyuru_hedefleri (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  duyuru_id INTEGER NOT NULL,
+  hak_sahibi_id INTEGER NOT NULL,
+  UNIQUE(duyuru_id, hak_sahibi_id),
+  FOREIGN KEY (duyuru_id) REFERENCES duyurular(id) ON DELETE CASCADE,
+  FOREIGN KEY (hak_sahibi_id) REFERENCES hak_sahipleri(id) ON DELETE CASCADE
+);
+
+-- Duyuru okundu kaydı: hangi kullanıcı hangi duyuruyu açtı
+CREATE TABLE IF NOT EXISTS duyuru_okundu (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  duyuru_id INTEGER NOT NULL,
+  kullanici_id INTEGER NOT NULL,
+  okundu_tarihi TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(duyuru_id, kullanici_id),
+  FOREIGN KEY (duyuru_id) REFERENCES duyurular(id) ON DELETE CASCADE,
+  FOREIGN KEY (kullanici_id) REFERENCES kullanicilar(id) ON DELETE CASCADE
 );
 
 -- Bildirimler: belirli bir kullanıcıya yönelik
