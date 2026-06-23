@@ -849,12 +849,18 @@ async function teknelerSayfa(hedef) {
     const liste = await istek('/tekneler');
     durum.veri.tekneler = liste;
     const cokLiman = yetkili('super_admin');
+    // Listedeki benzersiz tekne türlerini topla (alfabetik)
+    const turler = [...new Set(liste.map(t => t.tekne_tipi).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
     hedef.innerHTML = `
       <div class="sayfa-baslik">
         <div><h1>Tekneler</h1><p>Limandaki tüm tekneler, sahipleri ve dam bilgileri</p></div>
       </div>
       <div class="filtre-bar">
         <input class="ara-kutu" id="ara" placeholder="🔍 Tekne adı, sahip veya tescil no ara…" />
+        <select class="ara-kutu" id="tur-filtre" style="max-width:220px">
+          <option value="">⛵ Tüm türler</option>
+          ${turler.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+        </select>
       </div>
       <div class="panel">
         <div class="tablo-sar">
@@ -870,15 +876,23 @@ async function teknelerSayfa(hedef) {
       </div>`;
 
     const ara = document.getElementById('ara');
-    ara.addEventListener('input', () => {
+    const turFiltre = document.getElementById('tur-filtre');
+    const suzVeCiz = () => {
       const q = ara.value.toLocaleLowerCase('tr');
-      const suz = liste.filter(t =>
-        (t.ad || '').toLocaleLowerCase('tr').includes(q) ||
-        (t.sahip_adi || '').toLocaleLowerCase('tr').includes(q) ||
-        (t.tescil_no || '').toLocaleLowerCase('tr').includes(q));
+      const tur = turFiltre.value;
+      const suz = liste.filter(t => {
+        const aramaUyar = !q ||
+          (t.ad || '').toLocaleLowerCase('tr').includes(q) ||
+          (t.sahip_adi || '').toLocaleLowerCase('tr').includes(q) ||
+          (t.tescil_no || '').toLocaleLowerCase('tr').includes(q);
+        const turUyar = !tur || t.tekne_tipi === tur;
+        return aramaUyar && turUyar;
+      });
       document.getElementById('tekne-govde').innerHTML = tekneSatirlari(suz, cokLiman);
       tekneSatirOlaylari(hedef);
-    });
+    };
+    ara.addEventListener('input', suzVeCiz);
+    turFiltre.addEventListener('change', suzVeCiz);
     tekneSatirOlaylari(hedef);
   } catch (err) { hataGoster(hedef, err); }
 }
