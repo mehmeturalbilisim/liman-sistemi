@@ -1079,6 +1079,80 @@ app.get('/api/rapor/eksik-belgeler.csv', girisGerekli, rolGerekli('super_admin',
   res.send(csvUret(basliklar, satirlar));
 });
 
+// ---- RAPOR: Süresi yaklaşan belgeler ----
+// Onaylı belgelerden, geçerlilik bitişine 'gun' günden az kalanları (veya yeni dolanları) toplar.
+function sureYaklasanlar(kapsam, gun = 60) {
+  const hsListe = kapsam === null
+    ? tumu('SELECT h.*, l.ad AS liman_adi FROM hak_sahipleri h JOIN limanlar l ON l.id=h.liman_id')
+    : tumu('SELECT h.*, l.ad AS liman_adi FROM hak_sahipleri h JOIN limanlar l ON l.id=h.liman_id WHERE h.liman_id=?', kapsam);
+  const bugun = new Date(); bugun.setHours(0, 0, 0, 0);
+  const sonuc = [];
+  for (const hs of hsListe) {
+    // Bu kişinin onaylı + geçerlilik tarihi olan belgeleri
+    const belgeler = tumu(
+      `SELECT b.*, bt.ad AS belge_adi FROM belgeler b JOIN belge_tipleri bt ON bt.id=b.belge_tipi_id
+       WHERE b.hak_sahibi_id=? AND b.durum='onayli' AND b.gecerlilik_bitis IS NOT NULL`, hs.id
+    );
+    for (const b of belgeler) {
+      const bitis = new Date(b.gecerlilik_bitis + 'T00:00:00');
+      const kalan = Math.round((bitis - bugun) / 86400000);
+      if (kalan <= gun) { // yaklaşan veya yeni dolmuş
+        sonuc.push({ hs, belge_adi: b.belge_adi, gecerlilik_bitis: b.gecerlilik_bitis, kalan });
+      }
+    }
+  }
+  // En acil (en az kalan) en üstte
+  sonuc.sort((a, b) => a.kalan - b.kalan);
+  return sonuc;
+}
+
+app.get('/api/rapor/sure-yaklasan.csv', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi', 'liman_personeli'), (req, res) => {
+  const gun = Math.max(1, Math.min(365, Number(req.query.gun) || 60));
+  const liste = sureYaklasanlar(limanKapsami(req), gun);
+  const basliklar = ['Hak Sahibi', 'Liman', 'Telefon', 'Belge', 'Geçerlilik Bitişi', 'Kalan Gün', 'Durum'];
+  const satirlar = liste.map(x => [
+    x.hs.ad_soyad, x.hs.liman_adi, x.hs.telefon || '', x.belge_adi, x.gecerlilik_bitis,
+    x.kalan < 0 ? `${Math.abs(x.kalan)} gün önce doldu` : x.kalan,
+    x.kalan < 0 ? 'Süresi doldu' : x.kalan <= 15 ? 'Çok acil' : x.kalan <= 30 ? 'Acil' : 'Yaklaşıyor',
+  ]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="suresi-yaklasan-belgeler.csv"');
+  res.send(csvUret(basliklar, satirlar));
+});
+
+app.get('/api/rapor/sure-yaklasan.html', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi', 'liman_personeli'), (req, res) => {
+  const gun = Math.max(1, Math.min(365, Number(req.query.gun) || 60));
+  const liste = sureYaklasanlar(limanKapsami(req), gun);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const satirlar = liste.map(x => {
+    const renk = x.kalan < 0 ? '#c0392b' : x.kalan <= 15 ? '#c0392b' : x.kalan <= 30 ? '#d68910' : '#1f7a8c';
+    const kalanStr = x.kalan < 0 ? `${Math.abs(x.kalan)} gün önce doldu` : `${x.kalan} gün`;
+    return `<tr>
+      <td>${esc(x.hs.ad_soyad)}</td><td>${esc(x.hs.liman_adi)}</td><td>${esc(x.hs.telefon || '-')}</td>
+      <td>${esc(x.belge_adi)}</td><td style="text-align:center">${esc(x.gecerlilik_bitis)}</td>
+      <td style="text-align:center;color:${renk};font-weight:600">${kalanStr}</td></tr>`;
+  }).join('');
+  const tarih = new Date().toLocaleDateString('tr-TR');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><title>Süresi Yaklaşan Belgeler</title>
+    <style>
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:32px;color:#1a2b33}
+      h1{font-size:22px;margin-bottom:4px} .alt{color:#6b7c84;margin-bottom:20px;font-size:13px}
+      table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:9px 11px;border-bottom:1px solid #e3eceb;text-align:left}
+      th{background:#f0f7f6;color:#0e7c86;font-weight:600} tr:hover{background:#fafdfc}
+      .bos{padding:40px;text-align:center;color:#6b7c84}
+      @media print{body{margin:0} .yazdir-not{display:none}}
+    </style></head><body>
+    <h1>Süresi Yaklaşan Belgeler</h1>
+    <div class="alt">Önümüzdeki ${gun} gün içinde süresi dolacak (veya yeni dolmuş) onaylı belgeler • ${tarih}</div>
+    <div class="yazdir-not" style="background:#fff8e6;border:1px solid #f0d98a;padding:10px 14px;border-radius:8px;margin-bottom:18px;font-size:13px">
+      💡 Yazdırmak/PDF kaydetmek için: tarayıcı menüsü → Yazdır (veya Cmd/Ctrl+P).</div>
+    ${liste.length === 0
+      ? '<div class="bos">Bu dönemde süresi yaklaşan belge yok. 🎉</div>'
+      : `<table><thead><tr><th>Hak Sahibi</th><th>Liman</th><th>Telefon</th><th>Belge</th><th>Geçerlilik Bitişi</th><th>Kalan</th></tr></thead><tbody>${satirlar}</tbody></table>`}
+    </body></html>`);
+});
+
 // ---- RAPOR: Yazdırılabilir özet (HTML → tarayıcıdan PDF) ----
 app.get('/api/rapor/uygunluk.html', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi', 'liman_personeli'), (req, res) => {
   const veri = raporVerisi(limanKapsami(req));

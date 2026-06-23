@@ -1810,11 +1810,33 @@ async function raporlarSayfa(hedef) {
           <button class="btn btn-acik btn-mini" data-csv="/api/rapor/eksik-belgeler.csv">⬇ Excel (CSV)</button>
         </div>
       </div>
+      <div class="rapor-kart">
+        <div class="bik">⏰</div>
+        <h3>Süresi yaklaşan belgeler</h3>
+        <p>Geçerlilik tarihi yaklaşan onaylı belgeler. En acil olan en üstte listelenir.</p>
+        <div class="alan" style="margin:4px 0 12px">
+          <label style="font-size:12px">Zaman aralığı</label>
+          <select id="yaklasan-gun">
+            <option value="30">Önümüzdeki 30 gün</option>
+            <option value="60" selected>Önümüzdeki 60 gün</option>
+            <option value="90">Önümüzdeki 90 gün</option>
+            <option value="180">Önümüzdeki 6 ay</option>
+          </select>
+        </div>
+        <div class="indir">
+          <button class="btn btn-mini" id="yaklasan-html">🖨️ Yazdır / PDF</button>
+          <button class="btn btn-acik btn-mini" id="yaklasan-csv">⬇ Excel (CSV)</button>
+        </div>
+      </div>
     </div>
     <div class="mesaj-bilgi">💡 "Yazdır / PDF" butonu raporu yeni sekmede açar; oradan tarayıcının yazdır penceresiyle PDF olarak kaydedebilirsiniz. CSV dosyaları Excel'de açılır.</div>`;
 
   hedef.querySelectorAll('[data-html]').forEach(b => b.addEventListener('click', () => raporIndir(b.dataset.html.replace('/api', ''))));
   hedef.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => raporIndir(b.dataset.csv.replace('/api', ''))));
+  // Süresi yaklaşan: seçilen gün sayısına göre
+  const gunSec = () => document.getElementById('yaklasan-gun').value;
+  document.getElementById('yaklasan-html').addEventListener('click', () => raporIndir('/rapor/sure-yaklasan.html?gun=' + gunSec()));
+  document.getElementById('yaklasan-csv').addEventListener('click', () => raporIndir('/rapor/sure-yaklasan.csv?gun=' + gunSec()));
 }
 
 async function mesajlarSayfa(hedef) {
