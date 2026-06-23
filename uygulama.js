@@ -1784,7 +1784,9 @@ async function panelSayfa(hedef) {
 
 // Token'lı indirme (yeni sekmede query token ile)
 function raporIndir(yol) {
-  window.open(API + yol + '?token=' + durum.token, '_blank');
+  // URL'de zaten '?' (ör. ?gun=60) varsa token'ı '&' ile ekle, yoksa '?' ile
+  const ayrac = yol.includes('?') ? '&' : '?';
+  window.open(API + yol + ayrac + 'token=' + durum.token, '_blank');
 }
 
 async function raporlarSayfa(hedef) {
