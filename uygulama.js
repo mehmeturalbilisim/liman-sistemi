@@ -156,6 +156,17 @@ function menuOgeleri() {
   if (yetkili('super_admin', 'liman_yoneticisi', 'liman_personeli')) m.push({ id: 'raporlar', ad: 'Raporlar', ikon: '📈' });
   if (yetkili('super_admin', 'liman_yoneticisi')) m.push({ id: 'belge-tipleri', ad: 'Belge Tipleri', ikon: '🗂️' });
   if (yetkili('super_admin', 'liman_yoneticisi')) m.push({ id: 'kullanicilar', ad: 'Kullanıcılar', ikon: '🔑' });
+
+  // Personel ise ve izinleri tanımlıysa, sadece izinli bölümleri göster
+  const izinler = durum.kullanici && durum.kullanici.izinler;
+  if (durum.kullanici && durum.kullanici.rol === 'liman_personeli' && Array.isArray(izinler) && izinler.length) {
+    // İzin anahtarı → menü id eşlemesi. Belge inceleme izni "inceleme" sayfasını da açar.
+    const izinMenuId = new Set(izinler);
+    if (izinMenuId.has('belgeler')) izinMenuId.add('inceleme');
+    // Her zaman açık kalanlar: genel bakış ve panel
+    const herzaman = new Set(['ozet', 'panel']);
+    return m.filter(o => herzaman.has(o.id) || izinMenuId.has(o.id));
+  }
   return m;
 }
 
@@ -1098,13 +1109,19 @@ async function kullanicilarSayfa(hedef) {
 
 async function kullaniciFormu(kul = null) {
   let limanlar = durum.veri.limanlar;
-  if (yetkili('super_admin') && !limanlar) limanlar = await istek('/limanlar');
+  if (yetkili('super_admin') && !limanlar) { limanlar = await istek('/limanlar'); durum.veri.limanlar = limanlar; }
   const superAdmin = yetkili('super_admin');
   const duzenle = !!kul;
   const rolSecenek = superAdmin
     ? ['super_admin', 'liman_yoneticisi', 'liman_personeli', 'hak_sahibi', 'vekil']
     : ['liman_personeli', 'hak_sahibi', 'vekil'];
   const d = kul || {};
+  // Vekil seçimi için hak sahipleri ve personel izin bölümleri
+  let hakSahipleri = [], izinBolumleri = [];
+  try { hakSahipleri = await istek('/hak-sahipleri'); } catch {}
+  try { izinBolumleri = await istek('/izin-bolumleri'); } catch {}
+  const mevcutIzinler = (() => { try { return d.izinler ? JSON.parse(d.izinler) : null; } catch { return null; } })();
+
   modal(duzenle ? 'Kullanıcıyı düzenle' : 'Yeni kullanıcı', `
     <div class="alan"><label>Ad soyad *</label><input name="ad_soyad" value="${escapeHtml(d.ad_soyad)}" required /></div>
     <div class="alan"><label>E-posta *</label><input name="eposta" type="email" value="${escapeHtml(d.eposta)}" required /></div>
@@ -1113,19 +1130,51 @@ async function kullaniciFormu(kul = null) {
       <div class="alan"><label>Şifre ${duzenle ? '(değiştirmek için doldurun)' : '*'}</label><input name="sifre" type="password" ${duzenle ? '' : 'required'} minlength="6" placeholder="${duzenle ? 'Boş bırakırsanız değişmez' : ''}" /></div>
     </div>
     <div class="alan"><label>Rol *</label>
-      <select name="rol" required>${rolSecenek.map(r => `<option value="${r}" ${d.rol === r ? 'selected' : ''}>${rolAdi[r]}</option>`).join('')}</select></div>
-    ${(superAdmin && !duzenle) ? `<div class="alan"><label>Liman (rol gerektiriyorsa)</label>
-      <select name="liman_id"><option value="">— Yok —</option>
-        ${(limanlar || []).map(l => `<option value="${l.id}">${escapeHtml(l.ad)}</option>`).join('')}</select></div>` : ''}
+      <select name="rol" id="rol-sec" required>${rolSecenek.map(r => `<option value="${r}" ${d.rol === r ? 'selected' : ''}>${rolAdi[r]}</option>`).join('')}</select>
+      <div class="rol-aciklama" id="rol-aciklama"></div>
+    </div>
+    ${superAdmin ? `<div class="alan" id="liman-alan"><label>Hangi liman / kooperatif</label>
+      <select name="liman_id"><option value="">— Yok (sistem geneli) —</option>
+        ${(limanlar || []).map(l => `<option value="${l.id}" ${d.liman_id == l.id ? 'selected' : ''}>${escapeHtml(l.ad)}</option>`).join('')}</select>
+      <p class="kucuk-not">Liman yöneticisi/personeli için zorunlu. Süper admin için boş bırakın.</p></div>` : ''}
+
+    <div class="alan gizli" id="vekil-alan">
+      <label>Kimin vekili olacak? *</label>
+      <select name="temsil_edilen_hs_id">
+        <option value="">— Hak sahibi seçin —</option>
+        ${hakSahipleri.map(h => `<option value="${h.id}" ${d.temsil_edilen_hs_id == h.id ? 'selected' : ''}>${escapeHtml(h.ad_soyad)}${h.telefon ? ' (' + escapeHtml(h.telefon) + ')' : ''}</option>`).join('')}
+      </select>
+      <p class="kucuk-not">Bu vekil, seçtiğiniz hak sahibinin belgelerini onun adına yönetebilecek.</p>
+    </div>
+
+    <div class="alan gizli" id="izin-alan">
+      <label>Personelin erişebileceği bölümler</label>
+      <p class="kucuk-not" style="margin-top:0">Hiçbiri seçilmezse personel tüm bölümlere erişir. Seçim yaparsanız yalnızca seçtikleriniz görünür.</p>
+      <div class="kisi-secim-kutu" id="izin-kutu">
+        ${izinBolumleri.map(b => `<label class="kisi-secenek"><input type="checkbox" value="${b.anahtar}" ${mevcutIzinler && mevcutIzinler.includes(b.anahtar) ? 'checked' : ''} /> ${escapeHtml(b.ad)}</label>`).join('')}
+      </div>
+    </div>
+
     ${duzenle ? `<div class="alan" style="display:flex;align-items:center;gap:9px">
       <input type="checkbox" name="aktif" id="aktif-cb" ${d.aktif ? 'checked' : ''} style="width:auto" />
       <label for="aktif-cb" style="margin:0">Hesap aktif (kapatırsanız giriş yapamaz)</label>
     </div>` : ''}
   `, async (form) => {
     const govde = formVeri(form);
+    const rol = form.querySelector('#rol-sec').value;
+    // Vekil: temsil edilen zorunlu
+    if (rol === 'vekil') {
+      const hsId = form.querySelector('[name="temsil_edilen_hs_id"]').value;
+      if (!hsId) throw new Error('Vekil için "kimin vekili" seçilmelidir.');
+      govde.temsil_edilen_hs_id = Number(hsId);
+    }
+    // Personel: seçili izinler
+    if (rol === 'liman_personeli') {
+      govde.izinler = [...form.querySelectorAll('#izin-kutu input:checked')].map(c => c.value);
+    }
     if (duzenle) {
       govde.aktif = form.querySelector('#aktif-cb')?.checked ? 1 : 0;
-      if (!govde.sifre) delete govde.sifre; // boşsa şifreyi değiştirme
+      if (!govde.sifre) delete govde.sifre;
       await istek('/kullanicilar/' + kul.id, { method: 'PUT', body: JSON.stringify(govde) });
       toast('Kullanıcı güncellendi.');
     } else {
@@ -1134,6 +1183,29 @@ async function kullaniciFormu(kul = null) {
     }
     sayfaCiz();
   });
+
+  // Role göre alanları göster/gizle
+  const rolSec = document.getElementById('rol-sec');
+  const vekilAlan = document.getElementById('vekil-alan');
+  const izinAlan = document.getElementById('izin-alan');
+  const limanAlan = document.getElementById('liman-alan');
+  const rolAciklama = document.getElementById('rol-aciklama');
+  const aciklamalar = {
+    super_admin: 'Tüm sistemi ve tüm limanları yönetir.',
+    liman_yoneticisi: 'Seçtiğiniz limanın tamamını yönetir (hak sahipleri, tekneler, belgeler, personel vb.).',
+    liman_personeli: 'Limanın belirli bölümlerinde çalışır. Aşağıdan erişebileceği bölümleri seçebilirsiniz.',
+    hak_sahibi: 'Kendi belgelerini yükler ve takip eder.',
+    vekil: 'Bir hak sahibi adına işlem yapar (oğlu, muhasebecisi vb.).',
+  };
+  const guncelle = () => {
+    const r = rolSec.value;
+    vekilAlan.classList.toggle('gizli', r !== 'vekil');
+    izinAlan.classList.toggle('gizli', r !== 'liman_personeli');
+    if (limanAlan) limanAlan.classList.toggle('gizli', !['liman_yoneticisi', 'liman_personeli'].includes(r) && r !== 'hak_sahibi' && r !== 'vekil');
+    if (rolAciklama) rolAciklama.textContent = aciklamalar[r] || '';
+  };
+  rolSec.addEventListener('change', guncelle);
+  guncelle();
 }
 
 // ============================================================

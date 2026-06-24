@@ -58,6 +58,36 @@ function limanKapsami(req) {
   return req.kullanici.liman_id;
 }
 
+// Personele atanabilecek erişim bölümleri (anahtar + görünen ad)
+const PERSONEL_IZIN_BOLUMLERI = [
+  { anahtar: 'hak-sahipleri', ad: 'Hak Sahipleri' },
+  { anahtar: 'tekneler', ad: 'Tekneler' },
+  { anahtar: 'damlar', ad: 'Damlar' },
+  { anahtar: 'belgeler', ad: 'Belge inceleme/onay' },
+  { anahtar: 'duyurular', ad: 'Duyurular' },
+  { anahtar: 'mesajlar', ad: 'Toplu mesaj' },
+  { anahtar: 'raporlar', ad: 'Raporlar' },
+  { anahtar: 'belge-tipleri', ad: 'Belge tipleri' },
+];
+
+// Personelin izinlerini DB'den oku (NULL = tüm bölümler)
+function personelIzinleri(req) {
+  if (req.kullanici.rol !== 'liman_personeli') return null; // sadece personeli kısıtlarız
+  const k = getir('SELECT izinler FROM kullanicilar WHERE id=?', req.kullanici.id);
+  if (!k || !k.izinler) return null; // izin tanımlı değilse = tümü
+  try { return JSON.parse(k.izinler); } catch { return null; }
+}
+
+// Belirli bir bölüme erişim zorunlu kılan middleware
+function izinGerekli(bolum) {
+  return (req, res, next) => {
+    if (req.kullanici.rol !== 'liman_personeli') return next(); // yönetici/admin kısıtlanmaz
+    const izinler = personelIzinleri(req);
+    if (izinler === null || izinler.includes(bolum)) return next();
+    return res.status(403).json({ hata: 'Bu bölüme erişim yetkiniz yok.' });
+  };
+}
+
 // ============ KİMLİK DOĞRULAMA ============
 app.post('/api/giris', (req, res) => {
   const { eposta, sifre } = req.body;
@@ -66,14 +96,17 @@ app.post('/api/giris', (req, res) => {
   if (!k || !bcrypt.compareSync(sifre, k.sifre_hash)) {
     return res.status(401).json({ hata: 'E-posta veya şifre hatalı.' });
   }
+  const izinler = (k.rol === 'liman_personeli' && k.izinler) ? (() => { try { return JSON.parse(k.izinler); } catch { return null; } })() : null;
   res.json({
     token: tokenUret(k),
-    kullanici: { id: k.id, ad_soyad: k.ad_soyad, rol: k.rol, liman_id: k.liman_id },
+    kullanici: { id: k.id, ad_soyad: k.ad_soyad, rol: k.rol, liman_id: k.liman_id, izinler },
   });
 });
 
 app.get('/api/ben', girisGerekli, (req, res) => {
-  res.json({ kullanici: req.kullanici });
+  const k = getir('SELECT id,ad_soyad,rol,liman_id,izinler FROM kullanicilar WHERE id=?', req.kullanici.id);
+  const izinler = (k && k.rol === 'liman_personeli' && k.izinler) ? (() => { try { return JSON.parse(k.izinler); } catch { return null; } })() : null;
+  res.json({ kullanici: { ...req.kullanici, izinler } });
 });
 
 // ============ LİMANLAR ============
@@ -396,29 +429,56 @@ app.delete('/api/damlar/:id', girisGerekli, rolGerekli('super_admin', 'liman_yon
 // ============ KULLANICILAR (liman yöneticisi/personel oluşturma) ============
 app.get('/api/kullanicilar', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), (req, res) => {
   const kapsam = limanKapsami(req);
+  const alanlar = 'k.id,k.ad_soyad,k.eposta,k.telefon,k.rol,k.liman_id,k.aktif,k.temsil_edilen_hs_id,k.izinler,h.ad_soyad AS temsil_edilen_ad';
   const satirlar = kapsam === null
-    ? tumu('SELECT id,ad_soyad,eposta,telefon,rol,liman_id,aktif FROM kullanicilar ORDER BY ad_soyad')
-    : tumu("SELECT id,ad_soyad,eposta,telefon,rol,liman_id,aktif FROM kullanicilar WHERE liman_id=? ORDER BY ad_soyad", kapsam);
+    ? tumu(`SELECT ${alanlar} FROM kullanicilar k LEFT JOIN hak_sahipleri h ON h.id=k.temsil_edilen_hs_id ORDER BY k.ad_soyad`)
+    : tumu(`SELECT ${alanlar} FROM kullanicilar k LEFT JOIN hak_sahipleri h ON h.id=k.temsil_edilen_hs_id WHERE k.liman_id=? ORDER BY k.ad_soyad`, kapsam);
   res.json(satirlar);
+});
+
+// Personele atanabilecek erişim bölümleri (izin anahtarları)
+app.get('/api/izin-bolumleri', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), (req, res) => {
+  res.json(PERSONEL_IZIN_BOLUMLERI);
 });
 
 app.post('/api/kullanicilar', girisGerekli, rolGerekli('super_admin', 'liman_yoneticisi'), (req, res) => {
   const kapsam = limanKapsami(req);
-  let { ad_soyad, eposta, telefon, sifre, rol, liman_id } = req.body;
+  let { ad_soyad, eposta, telefon, sifre, rol, liman_id, temsil_edilen_hs_id, izinler } = req.body;
   if (!ad_soyad || !eposta || !sifre || !rol) return res.status(400).json({ hata: 'Ad, e-posta, şifre ve rol zorunlu.' });
-  // Liman yöneticisi sadece kendi limanına personel ekler ve süper admin yapamaz
+  // Liman yöneticisi sadece kendi limanına ekler ve süper admin/liman yöneticisi yapamaz
   if (kapsam !== null) {
     liman_id = kapsam;
     if (!['liman_personeli', 'hak_sahibi', 'vekil'].includes(rol)) {
       return res.status(403).json({ hata: 'Bu rolü atama yetkiniz yok.' });
     }
   }
+  // Vekil ise: kimin vekili olduğu zorunlu ve aynı limandan olmalı
+  let vekilHsId = null;
+  if (rol === 'vekil') {
+    if (!temsil_edilen_hs_id) return res.status(400).json({ hata: 'Vekil için temsil edilen hak sahibi seçilmelidir.' });
+    const hs = getir('SELECT * FROM hak_sahipleri WHERE id=?', Number(temsil_edilen_hs_id));
+    if (!hs) return res.status(404).json({ hata: 'Seçilen hak sahibi bulunamadı.' });
+    if (kapsam !== null && hs.liman_id !== kapsam) return res.status(403).json({ hata: 'Bu hak sahibine erişiminiz yok.' });
+    vekilHsId = hs.id;
+    if (!liman_id) liman_id = hs.liman_id;
+  }
+  // Personel ise: izinler (JSON dizi). Boş/yoksa NULL = tüm bölümler.
+  let izinlerJson = null;
+  if (rol === 'liman_personeli' && Array.isArray(izinler) && izinler.length) {
+    izinlerJson = JSON.stringify(izinler.filter(x => typeof x === 'string'));
+  }
   const varMi = getir('SELECT id FROM kullanicilar WHERE eposta = ?', eposta);
   if (varMi) return res.status(409).json({ hata: 'Bu e-posta zaten kayıtlı.' });
   const hash = bcrypt.hashSync(sifre, 10);
-  const r = calistir(`INSERT INTO kullanicilar (ad_soyad,eposta,telefon,sifre_hash,rol,liman_id)
-    VALUES (?,?,?,?,?,?)`, ad_soyad, eposta, telefon, hash, rol, liman_id || null);
-  res.status(201).json({ id: r.lastInsertRowid, ad_soyad, eposta, rol, liman_id });
+  const r = calistir(`INSERT INTO kullanicilar (ad_soyad,eposta,telefon,sifre_hash,rol,liman_id,temsil_edilen_hs_id,izinler)
+    VALUES (?,?,?,?,?,?,?,?)`, ad_soyad, eposta, telefon, hash, rol, liman_id || null, vekilHsId, izinlerJson);
+  const yeniId = r.lastInsertRowid;
+  // Vekili hak sahibi kaydına da bağla (mevcut self-servis mantığı kullanici_id üzerinden çalışıyor)
+  if (rol === 'vekil' && vekilHsId) {
+    const mevcutBag = getir('SELECT kullanici_id FROM hak_sahipleri WHERE id=?', vekilHsId);
+    if (!mevcutBag.kullanici_id) calistir('UPDATE hak_sahipleri SET kullanici_id=? WHERE id=?', yeniId, vekilHsId);
+  }
+  res.status(201).json({ id: yeniId, ad_soyad, eposta, rol, liman_id });
 });
 
 // Kullanıcı güncelle (bilgiler + isteğe bağlı şifre)
@@ -450,17 +510,36 @@ app.put('/api/kullanicilar/:id', girisGerekli, rolGerekli('super_admin', 'liman_
     rol: rol ?? mevcut.rol,
     aktif: aktif === undefined ? mevcut.aktif : (aktif ? 1 : 0),
   };
+  // İzinler (personel) ve vekil bağı güncelle
+  const { temsil_edilen_hs_id, izinler } = req.body;
+  let izinlerJson = mevcut.izinler;
+  if (g.rol === 'liman_personeli') {
+    izinlerJson = (Array.isArray(izinler) && izinler.length) ? JSON.stringify(izinler.filter(x => typeof x === 'string')) : null;
+  } else {
+    izinlerJson = null; // personel değilse izin kaydı tutma
+  }
+  let vekilHsId = mevcut.temsil_edilen_hs_id;
+  if (g.rol === 'vekil' && temsil_edilen_hs_id) {
+    const hs = getir('SELECT * FROM hak_sahipleri WHERE id=?', Number(temsil_edilen_hs_id));
+    if (hs && (kapsam === null || hs.liman_id === kapsam)) {
+      vekilHsId = hs.id;
+      const mb = getir('SELECT kullanici_id FROM hak_sahipleri WHERE id=?', hs.id);
+      if (!mb.kullanici_id) calistir('UPDATE hak_sahipleri SET kullanici_id=? WHERE id=?', id, hs.id);
+    }
+  } else if (g.rol !== 'vekil') {
+    vekilHsId = null;
+  }
   // Şifre verildiyse güncelle (en az 6 karakter)
   if (sifre && sifre.trim()) {
     if (sifre.length < 6) return res.status(400).json({ hata: 'Şifre en az 6 karakter olmalı.' });
     const hash = bcrypt.hashSync(sifre, 10);
-    calistir('UPDATE kullanicilar SET ad_soyad=?,eposta=?,telefon=?,rol=?,aktif=?,sifre_hash=? WHERE id=?',
-      g.ad_soyad, g.eposta, g.telefon, g.rol, g.aktif, hash, id);
+    calistir('UPDATE kullanicilar SET ad_soyad=?,eposta=?,telefon=?,rol=?,aktif=?,temsil_edilen_hs_id=?,izinler=?,sifre_hash=? WHERE id=?',
+      g.ad_soyad, g.eposta, g.telefon, g.rol, g.aktif, vekilHsId, izinlerJson, hash, id);
   } else {
-    calistir('UPDATE kullanicilar SET ad_soyad=?,eposta=?,telefon=?,rol=?,aktif=? WHERE id=?',
-      g.ad_soyad, g.eposta, g.telefon, g.rol, g.aktif, id);
+    calistir('UPDATE kullanicilar SET ad_soyad=?,eposta=?,telefon=?,rol=?,aktif=?,temsil_edilen_hs_id=?,izinler=? WHERE id=?',
+      g.ad_soyad, g.eposta, g.telefon, g.rol, g.aktif, vekilHsId, izinlerJson, id);
   }
-  const guncel = getir('SELECT id,ad_soyad,eposta,telefon,rol,liman_id,aktif FROM kullanicilar WHERE id=?', id);
+  const guncel = getir('SELECT id,ad_soyad,eposta,telefon,rol,liman_id,aktif,temsil_edilen_hs_id,izinler FROM kullanicilar WHERE id=?', id);
   res.json(guncel);
 });
 

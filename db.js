@@ -18,9 +18,14 @@ CREATE TABLE IF NOT EXISTS kullanicilar (
   sifre_hash TEXT NOT NULL,
   rol TEXT NOT NULL CHECK(rol IN ('super_admin','liman_yoneticisi','liman_personeli','hak_sahibi','vekil')),
   liman_id INTEGER,
+  -- Vekil ise hangi hak sahibinin vekili olduğu
+  temsil_edilen_hs_id INTEGER,
+  -- Personel ise erişebileceği bölümler (JSON dizi: ["hak-sahipleri","tekneler",...]); NULL = tümü
+  izinler TEXT,
   aktif INTEGER NOT NULL DEFAULT 1,
   olusturma_tarihi TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (liman_id) REFERENCES limanlar(id) ON DELETE SET NULL
+  FOREIGN KEY (liman_id) REFERENCES limanlar(id) ON DELETE SET NULL,
+  FOREIGN KEY (temsil_edilen_hs_id) REFERENCES hak_sahipleri(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS limanlar (
