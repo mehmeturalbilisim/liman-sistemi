@@ -79,8 +79,8 @@ const hasanKul = db.prepare(`INSERT INTO kullanicilar (ad_soyad,eposta,sifre_has
 db.prepare(`UPDATE hak_sahipleri SET kullanici_id=? WHERE id=?`).run(hasanKul, hs1);
 
 // ===== Vekil hesabı: Ali Demir adına işlem yapan temsilci =====
-const vekilKul = db.prepare(`INSERT INTO kullanicilar (ad_soyad,eposta,sifre_hash,rol,liman_id) VALUES (?,?,?,?,?)`)
-  .run('Ali Demir (Vekil: oğlu)', 'vekil@liman.gov.tr', h('vekil123'), 'vekil', liman1).lastInsertRowid;
+const vekilKul = db.prepare(`INSERT INTO kullanicilar (ad_soyad,eposta,sifre_hash,rol,liman_id,temsil_edilen_hs_id) VALUES (?,?,?,?,?,?)`)
+  .run('Ali Demir (Vekil: oğlu)', 'vekil@liman.gov.tr', h('vekil123'), 'vekil', liman1, hs2).lastInsertRowid;
 db.prepare(`UPDATE hak_sahipleri SET kullanici_id=? WHERE id=?`).run(vekilKul, hs2);
 
 // ===== FAZ 3: Örnek duyurular =====

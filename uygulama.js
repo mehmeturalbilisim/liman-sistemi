@@ -1074,6 +1074,16 @@ async function damFormu(dam = null) {
   });
 }
 
+// Personel izin listesini kısa özete çevir
+function personelIzinOzet(izinlerJson) {
+  if (!izinlerJson) return 'Tüm bölümler';
+  let izinler;
+  try { izinler = JSON.parse(izinlerJson); } catch { return 'Tüm bölümler'; }
+  if (!Array.isArray(izinler) || izinler.length === 0) return 'Tüm bölümler';
+  const adlar = { 'hak-sahipleri': 'Hak Sahipleri', 'tekneler': 'Tekneler', 'damlar': 'Damlar', 'belgeler': 'Belgeler', 'duyurular': 'Duyurular', 'mesajlar': 'Mesaj', 'raporlar': 'Raporlar', 'belge-tipleri': 'Belge Tipleri' };
+  return izinler.map(a => adlar[a] || a).join(', ');
+}
+
 // ============ KULLANICILAR ============
 async function kullanicilarSayfa(hedef) {
   try {
@@ -1092,7 +1102,12 @@ async function kullanicilarSayfa(hedef) {
                 <tr>
                   <td><b>${escapeHtml(k.ad_soyad)}</b></td>
                   <td>${escapeHtml(k.eposta)}</td>
-                  <td><span class="rozet rozet-teal">${rolAdi[k.rol] || k.rol}</span></td>
+                  <td>
+                    <span class="rozet rozet-teal">${rolAdi[k.rol] || k.rol}</span>
+                    ${k.rol === 'vekil' && k.temsil_edilen_ad ? `<span class="alt">${escapeHtml(k.temsil_edilen_ad)} adına</span>` : ''}
+                    ${k.rol === 'vekil' && !k.temsil_edilen_ad ? '<span class="alt" style="color:var(--mercan)">⚠ kişi seçilmemiş</span>' : ''}
+                    ${k.rol === 'liman_personeli' ? `<span class="alt">${personelIzinOzet(k.izinler)}</span>` : ''}
+                  </td>
                   <td><span class="rozet ${k.aktif ? 'rozet-yesil' : 'rozet-gri'}">${k.aktif ? 'Aktif' : 'Pasif'}</span></td>
                   <td><div class="satir-islem">
                     ${(yetkili('super_admin') || k.rol !== 'super_admin') ? `<button class="btn btn-acik btn-mini" data-duzenle="${k.id}">Düzenle</button>` : ''}
