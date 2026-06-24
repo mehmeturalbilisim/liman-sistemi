@@ -1373,16 +1373,17 @@ function belgeOlaylariBagla(hedef, hsId, yenidenCiz) {
 
 // ---- BELGE YÜKLEME MODALI ----
 function belgeYuklemeModal(belgeTipiId, belgeAdi, hsId, yenidenCiz, tekneId = null, damId = null) {
-  const mobil = window.matchMedia('(max-width: 860px)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const yuklemeArayuzu = mobil
-    ? `<div class="yukleme-secim">
-         <button type="button" id="btn-kamera"><span class="bik">📷</span><span>Kamera ile çek</span></button>
-         <button type="button" id="btn-galeri"><span class="bik">🖼️</span><span>Dosyadan seç</span></button>
-       </div>`
-    : `<div class="yukleme-alani" id="yukleme-alani">
-         <div class="ikon">📎</div>
-         <p><b>Dosya seçmek için tıklayın</b><br/>veya buraya sürükleyin (PDF, JPG, PNG — en çok 10 MB)</p>
-       </div>`;
+  // Kamera, kamerası olan her cihazda gösterilir (mobil + kameralı masaüstü/dizüstü)
+  const kameraVar = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const yuklemeArayuzu = `
+    <div class="yukleme-secim">
+      ${kameraVar ? '<button type="button" id="btn-kamera"><span class="bik">📷</span><span>Kamera ile çek</span></button>' : ''}
+      <button type="button" id="btn-galeri"><span class="bik">🖼️</span><span>Dosyadan seç</span></button>
+    </div>
+    <div class="yukleme-alani" id="yukleme-alani">
+      <div class="ikon">📎</div>
+      <p><b>Dosya seçmek için tıklayın</b><br/>veya buraya sürükleyin<br/><span style="font-size:12px;color:var(--metin-soluk)">PDF, Word, JPG, PNG — en çok 10 MB</span></p>
+    </div>`;
   modal(`Belge yükle: ${belgeAdi}`, `
     <div class="alan">
       <label>Belgenin düzenlenme tarihi</label>
@@ -1392,13 +1393,20 @@ function belgeYuklemeModal(belgeTipiId, belgeAdi, hsId, yenidenCiz, tekneId = nu
     <div class="alan">
       <label>Dosya *</label>
       ${yuklemeArayuzu}
-      <input type="file" id="dosya-input" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none" />
+      <input type="file" id="dosya-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none" />
       <input type="file" id="kamera-input" accept="image/*" capture="environment" style="display:none" />
+      <div id="kamera-canli" class="kamera-canli gizli">
+        <video id="kamera-video" autoplay playsinline></video>
+        <div class="kamera-islem">
+          <button type="button" class="btn" id="btn-cek">📸 Fotoğrafı çek</button>
+          <button type="button" class="btn btn-acik" id="btn-kamera-iptal">İptal</button>
+        </div>
+      </div>
       <div id="secilen" class="secilen-dosya gizli"></div>
     </div>
   `, async () => {
     const input = document.getElementById('dosya-input');
-    if (!input.files || !input.files[0]) throw new Error('Lütfen bir dosya seçin.');
+    if (!input.files || !input.files[0]) throw new Error('Lütfen bir dosya seçin veya fotoğraf çekin.');
     const fd = new FormData();
     fd.append('belge_tipi_id', belgeTipiId);
     fd.append('hak_sahibi_id', hsId);
@@ -1423,20 +1431,11 @@ function belgeYuklemeModal(belgeTipiId, belgeAdi, hsId, yenidenCiz, tekneId = nu
   };
   input.addEventListener('change', () => gosterDosya(input.files[0]));
 
-  if (mobil) {
-    // Kamera: çekilen fotoğrafı asıl dosya input'una aktar
-    document.getElementById('btn-kamera').addEventListener('click', () => kamera.click());
-    document.getElementById('btn-galeri').addEventListener('click', () => input.click());
-    kamera.addEventListener('change', () => {
-      if (kamera.files && kamera.files[0]) {
-        const dt = new DataTransfer();
-        dt.items.add(kamera.files[0]);
-        input.files = dt.files;
-        gosterDosya(kamera.files[0]);
-      }
-    });
-  } else {
-    const alan = document.getElementById('yukleme-alani');
+  // Dosyadan seç + sürükle-bırak alanı (her cihazda)
+  const galeriBtn = document.getElementById('btn-galeri');
+  if (galeriBtn) galeriBtn.addEventListener('click', () => input.click());
+  const alan = document.getElementById('yukleme-alani');
+  if (alan) {
     alan.addEventListener('click', () => input.click());
     alan.addEventListener('dragover', (e) => { e.preventDefault(); alan.classList.add('surukle'); });
     alan.addEventListener('dragleave', () => alan.classList.remove('surukle'));
@@ -1444,6 +1443,49 @@ function belgeYuklemeModal(belgeTipiId, belgeAdi, hsId, yenidenCiz, tekneId = nu
       e.preventDefault(); alan.classList.remove('surukle');
       if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; gosterDosya(input.files[0]); }
     });
+  }
+
+  // Kamera butonu
+  const kameraBtn = document.getElementById('btn-kamera');
+  if (kameraBtn) {
+    const mobil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (mobil) {
+      // Mobilde: cihazın yerel kamera arayüzü (capture) en iyi sonucu verir
+      kameraBtn.addEventListener('click', () => kamera.click());
+      kamera.addEventListener('change', () => {
+        if (kamera.files && kamera.files[0]) {
+          const dt = new DataTransfer(); dt.items.add(kamera.files[0]);
+          input.files = dt.files; gosterDosya(kamera.files[0]);
+        }
+      });
+    } else {
+      // Masaüstü/dizüstü: canlı kamera akışı aç, fotoğraf çek
+      const canli = document.getElementById('kamera-canli');
+      const video = document.getElementById('kamera-video');
+      let akis = null;
+      const kapat = () => { if (akis) { akis.getTracks().forEach(t => t.stop()); akis = null; } canli.classList.add('gizli'); };
+      kameraBtn.addEventListener('click', async () => {
+        try {
+          akis = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          video.srcObject = akis;
+          canli.classList.remove('gizli');
+        } catch (e) {
+          toast('Kameraya erişilemedi. Tarayıcı izni gerekebilir.', 'hata');
+        }
+      });
+      document.getElementById('btn-kamera-iptal').addEventListener('click', kapat);
+      document.getElementById('btn-cek').addEventListener('click', () => {
+        const tuval = document.createElement('canvas');
+        tuval.width = video.videoWidth; tuval.height = video.videoHeight;
+        tuval.getContext('2d').drawImage(video, 0, 0);
+        tuval.toBlob((blob) => {
+          const dosya = new File([blob], 'belge-foto-' + Date.now() + '.jpg', { type: 'image/jpeg' });
+          const dt = new DataTransfer(); dt.items.add(dosya);
+          input.files = dt.files; gosterDosya(dosya);
+          kapat();
+        }, 'image/jpeg', 0.9);
+      });
+    }
   }
 }
 
@@ -1689,7 +1731,7 @@ async function duyuruFormu() {
         ${hakSahipleri.map(h => `<label class="kisi-secenek"><input type="checkbox" value="${h.id}" /> ${escapeHtml(h.ad_soyad)}${h.telefon ? ' <span class="alt-ic">(' + escapeHtml(h.telefon) + ')</span>' : ''}</label>`).join('') || '<p class="alt">Hak sahibi yok.</p>'}
       </div>
     </div>
-    <div class="alan"><label>Ek dosya (isteğe bağlı)</label><input type="file" name="dosya" accept=".pdf,.jpg,.jpeg,.png,.webp" /></div>
+    <div class="alan"><label>Ek dosya (isteğe bağlı)</label><input type="file" name="dosya" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" /></div>
   `, async (form) => {
     const hedefTipi = form.querySelector('[name="hedef_tipi"]').value;
     const fd = new FormData();

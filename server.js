@@ -43,7 +43,11 @@ const yukle = multer({
   storage: depolama,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (req, file, cb) => {
-    const izinli = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+    const izinli = [
+      'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic',
+      'application/msword', // .doc
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+    ];
     cb(null, izinli.includes(file.mimetype));
   },
 });
